@@ -1,0 +1,31 @@
+# Downloaded / generated data (large, reproducible via download_rh20t.py & build_rlds.py)
+data/
+rlds_output/
+
+# External repo cloned via GitHub (has its own .git — not tracked as a submodule here)
+rh20t_api/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code
+.claude/settings.local.json
