@@ -31,7 +31,8 @@ with a different range, delete rlds_output/<builder>/<cfg>/ first.
 
 Output
 ------
-    rlds_output/{builder_name}/{cfg_id}/1.0.0/
+    Saved next to the downloaded source, under the data root:
+    ../../../data/rh20t/rlds_output/{builder_name}/{cfg_id}/1.0.0/
 """
 
 import argparse
@@ -46,7 +47,9 @@ sys.path.insert(0, str(_ROOT))
 from rh20t_rlds._config import ALL_CFGS
 
 DATA_ROOT = (_ROOT / ".." / ".." / ".." / "data" / "rh20t").resolve()
-OUTPUT_DIR = _ROOT / "rlds_output"
+# RLDS output lives alongside the downloaded source, under the data root:
+#   ../../../data/rh20t/rlds_output/{builder}/{cfg}/1.0.0/
+OUTPUT_DIR = DATA_ROOT / "rlds_output"
 
 
 # ── Source detection ──────────────────────────────────────────────────────────
@@ -83,7 +86,7 @@ def _warn_if_exists(expected: Path):
 
 def build_hf(cfg_id: str, delete_source: bool = False,
              ep_start: int | None = None, ep_end: int | None = None):
-    """Output → rlds_output/r_h20t_rlds_hf/{cfg_id}/1.0.0/"""
+    """Output → {DATA_ROOT}/rlds_output/r_h20t_rlds_hf/{cfg_id}/1.0.0/"""
     import tensorflow_datasets as tfds
     from rh20t_rlds.lerobot_rlds_dataset_builder import RH20tRldsHF
 
@@ -108,7 +111,7 @@ def build_hf(cfg_id: str, delete_source: bool = False,
 
 def build_raw(cfg_id: str, delete_source: bool = False,
               ep_start: int | None = None, ep_end: int | None = None):
-    """Output → rlds_output/r_h20t_rlds_raw/{cfg_id}/1.0.0/
+    """Output → {DATA_ROOT}/rlds_output/r_h20t_rlds_raw/{cfg_id}/1.0.0/
 
     For the raw source, ep_start/ep_end select positions in the sorted
     scene-folder list (raw scenes have no LeRobot episode_index).

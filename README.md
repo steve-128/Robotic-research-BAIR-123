@@ -53,7 +53,8 @@ python build_rlds.py --cfg cfg3 --ep-start 100 --ep-end 199
 
 The data root is resolved **relative to the scripts**, three levels up, at
 `../../../data/rh20t/` (e.g. if the repo is at `~/proj/Research`, data lands in
-`~/data/rh20t/`). RLDS output stays next to the scripts.
+`~/data/rh20t/`). The converted RLDS output is saved **alongside the source**,
+under the same data root.
 
 ```
 ../../../data/rh20t/
@@ -64,20 +65,19 @@ The data root is resolved **relative to the scripts**, three levels up, at
 │   │   └── episodes/…/*.parquet        # per-episode length + video-file map
 │   ├── data/chunk-*/file-*.parquet     # state + action rows (chunked)
 │   └── videos/{cam}/chunk-*/file-*.mp4 # primary camera only
-└── RH20T/RH20T_{cfg}/                  # Google Drive source (if --gdrive)
-    └── <scene>/cam_*/color.mp4, transformed/*.npy, metadata.json
-
-rlds_output/                            # next to the scripts, NOT under data/
-└── r_h20t_rlds_hf/{cfg}/1.0.0/         # (or r_h20t_rlds_raw/…)
-    ├── dataset_info.json, features.json
-    └── *-train.tfrecord-*
+├── RH20T/RH20T_{cfg}/                  # Google Drive source (if --gdrive)
+│   └── <scene>/cam_*/color.mp4, transformed/*.npy, metadata.json
+└── rlds_output/                        # converted RLDS, under the data root
+    └── r_h20t_rlds_hf/{cfg}/1.0.0/     # (or r_h20t_rlds_raw/…)
+        ├── dataset_info.json, features.json
+        └── *-train.tfrecord-*
 ```
 
 Pass `--delete-source` to drop the downloaded source after a successful build.
 
 > **TFDS reuses an existing output dir and skips rebuilding.** To rebuild a
-> config with a different episode range, delete `rlds_output/<builder>/<cfg>/`
-> first.
+> config with a different episode range, delete
+> `../../../data/rh20t/rlds_output/<builder>/<cfg>/` first.
 
 ---
 

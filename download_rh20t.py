@@ -10,10 +10,10 @@ HuggingFace download grabs (for the selected episode range — default: ALL):
   • The primary camera's video files covering the range
 
 After download, RLDS conversion runs automatically unless --skip-build is given.
-By default BOTH versions are kept on disk (source under ../../../data/rh20t/):
+By default BOTH versions are kept on disk under the data root ../../../data/rh20t/:
   • the downloaded source  → ../../../data/rh20t/RH20T_hf_{cfg}/  or
                              ../../../data/rh20t/RH20T/RH20T_{cfg}/
-  • the converted RLDS      → rlds_output/…/{cfg}/1.0.0/  (next to the script)
+  • the converted RLDS      → ../../../data/rh20t/rlds_output/…/{cfg}/1.0.0/
 Pass --delete-source to remove the downloaded source after a successful build.
 
 Usage
