@@ -33,7 +33,7 @@ sys.path.insert(0, str(_ROOT))
 
 from rh20t_rlds._config import ALL_CFGS
 
-DATA_ROOT = (_ROOT / ".." / ".." / "data" / "rh20t").resolve()
+DATA_ROOT = (_ROOT / ".." / ".." / ".." / "data" / "rh20t").resolve()
 OUTPUT_DIR = _ROOT / "rlds_output"
 
 

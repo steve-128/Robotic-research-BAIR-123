@@ -10,9 +10,9 @@ HuggingFace download grabs:
   • Videos for the first camera found, N_EPISODES video files only
 
 After download, RLDS conversion runs automatically unless --skip-build is given.
-By default BOTH versions are kept on disk (source under ../../data/rh20t/):
-  • the downloaded source  → ../../data/rh20t/RH20T_hf_{cfg}/  or
-                             ../../data/rh20t/RH20T/RH20T_{cfg}/
+By default BOTH versions are kept on disk (source under ../../../data/rh20t/):
+  • the downloaded source  → ../../../data/rh20t/RH20T_hf_{cfg}/  or
+                             ../../../data/rh20t/RH20T/RH20T_{cfg}/
   • the converted RLDS      → rlds_output/…/{cfg}/1.0.0/  (next to the script)
 Pass --delete-source to remove the downloaded source after a successful build.
 
@@ -35,7 +35,7 @@ from pathlib import Path
 
 from rh20t_rlds._config import CFG_META, ALL_CFGS, PATCH_GDRIVE_ID, PATCHED_CFGS
 
-DATA_ROOT = (Path(__file__).resolve().parent / ".." / ".." / "data" / "rh20t").resolve()
+DATA_ROOT = (Path(__file__).resolve().parent / ".." / ".." / ".." / "data" / "rh20t").resolve()
 
 
 # ── Google Drive ──────────────────────────────────────────────────────────────
