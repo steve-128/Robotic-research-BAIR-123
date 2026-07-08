@@ -10,6 +10,10 @@ HuggingFace download grabs:
   • Videos for the first camera found, N_EPISODES video files only
 
 After download, RLDS conversion runs automatically unless --skip-build is given.
+By default BOTH versions are kept on disk:
+  • the downloaded source  → data/RH20T_hf_{cfg}/  or  data/RH20T/RH20T_{cfg}/
+  • the converted RLDS      → rlds_output/…/{cfg}/1.0.0/
+Pass --delete-source to remove the downloaded source after a successful build.
 
 Usage
 -----
@@ -19,6 +23,9 @@ Usage
     python download_rh20t.py --gdrive --cfg cfg2      # cfg2 from Google Drive
     python download_rh20t.py --hf --n-episodes 10     # 10-episode sample
     python download_rh20t.py --skip-build             # download only, no RLDS
+    python download_rh20t.py --delete-source          # convert, then drop source
+
+Default (no flags) = download → auto-convert → keep both source and RLDS output.
 """
 
 import argparse
