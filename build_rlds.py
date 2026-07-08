@@ -53,7 +53,10 @@ def _has_raw_data(cfg_id: str) -> bool:
         return False
     for name in [f"RH20T_{cfg_id}", cfg_id]:
         p = raw_root / name
-        if p.is_dir() and any(p.rglob("color/*.jpg")):
+        if not p.is_dir():
+            continue
+        # jpgs (already extracted) or color.mp4 (extracted lazily at build time)
+        if any(p.rglob("color/*.jpg")) or any(p.rglob("color.mp4")):
             return True
     return False
 

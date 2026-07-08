@@ -12,12 +12,15 @@ On-disk layout expected after extraction:
             metadata.json
             …
 
-RLDS step schema:
-    observation.image : uint8 [360, 640, 3]   – primary camera RGB
-    observation.state : float32 [tcp_dim + 1] – TCP pose + gripper
-    action            : float32 [tcp_dim + 1] – Δtcp + next gripper command
+RLDS step schema (identical for all cfgs — aligned TCP is always 7-D xyz+quat):
+    observation.image : uint8 [360, 640, 3]  – primary external camera RGB
+    observation.state : float32 [8]          – TCP pose (xyz+quat) + gripper
+    action            : float32 [8]          – ΔTCP + next gripper command
     reward / is_first / is_last / is_terminal / discount
     language_instruction : str  (empty – not provided in raw format)
+
+Note: raw archives ship cam_*/color.mp4 + timestamps.npy; frames for the
+primary camera are extracted to cam_*/color/*.jpg on first use.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
-from ._config import CFG_META, ALL_CFGS, RH20TCfgMeta
+from ._config import CFG_META, ALL_CFGS, ALIGNED_TCP_DIM, RH20TCfgMeta
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "rh20t_api"))
@@ -57,11 +60,11 @@ class RH20TRawBuilderConfig(tfds.core.BuilderConfig):
 
     @property
     def state_dim(self) -> int:
-        return self.meta.tcp_dim + 1  # TCP pose + gripper
+        return ALIGNED_TCP_DIM + 1  # unified TCP pose (xyz+quat) + gripper
 
     @property
     def action_dim(self) -> int:
-        return self.meta.tcp_dim + 1  # ΔTCP + gripper command
+        return ALIGNED_TCP_DIM + 1  # ΔTCP + gripper command
 
 
 # ── Scene helpers ─────────────────────────────────────────────────────────────
@@ -76,12 +79,40 @@ def _load_image(path: str) -> np.ndarray | None:
     return img
 
 
-def _build_steps(scene, tcp_dim: int, scene_id: str) -> list[dict] | None:
-    """Extract timestep data from an RH20TScene. Returns None on failure."""
-    lf_ts = scene.low_freq_timestamps
-    if not lf_ts:
+def _pick_primary_serial(scene) -> str | None:
+    """Primary camera: external (non in-hand) cam with the most frames."""
+    candidates = {s: ts for s, ts in scene.low_freq_timestamps.items() if ts}
+    if not candidates:
         return None
-    primary_serial = next(iter(lf_ts))
+    in_hand = set(getattr(scene._conf, "in_hand", None) or [])
+    external = {s: ts for s, ts in candidates.items() if s not in in_hand}
+    pool = external or candidates
+    return max(pool, key=lambda s: len(pool[s]))
+
+
+def _ensure_color_frames(scene, serial: str) -> bool:
+    """Extract cam_{serial}/color.mp4 → color/*.jpg if not already done."""
+    cam_dir = Path(scene.folder) / f"cam_{serial}"
+    color_dir = cam_dir / "color"
+    if color_dir.is_dir() and any(color_dir.glob("*.jpg")):
+        return True
+    mp4, ts = cam_dir / "color.mp4", cam_dir / "timestamps.npy"
+    if not (mp4.exists() and ts.exists()):
+        return False
+    from rh20t_api.extract import convert_dir
+    convert_dir(str(mp4), str(ts), str(cam_dir))
+    return any(color_dir.glob("*.jpg"))
+
+
+def _build_steps(scene, scene_id: str) -> list[dict] | None:
+    """Extract timestep data from an RH20TScene. Returns None on failure."""
+    tcp_dim = ALIGNED_TCP_DIM
+    primary_serial = _pick_primary_serial(scene)
+    if primary_serial is None:
+        return None
+    if not _ensure_color_frames(scene, primary_serial):
+        print(f"  [WARN] {scene_id}: no color frames for cam_{primary_serial}")
+        return None
 
     t_start = int(scene.start_timestamp)
     t_end = int(scene.end_timestamp)
@@ -253,7 +284,7 @@ class RH20tRlds(tfds.core.GeneratorBasedBuilder):
                 print(f"  [WARN] {scene_id}: {exc}")
                 continue
 
-            steps = _build_steps(scene, meta.tcp_dim, scene_id)
+            steps = _build_steps(scene, scene_id)
             if steps is None:
                 continue
 

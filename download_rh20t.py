@@ -25,12 +25,31 @@ import argparse
 import tarfile
 from pathlib import Path
 
-from rh20t_rlds._config import CFG_META, ALL_CFGS
+from rh20t_rlds._config import CFG_META, ALL_CFGS, PATCH_GDRIVE_ID, PATCHED_CFGS
 
 DATA_ROOT = Path(__file__).parent / "data"
 
 
 # ── Google Drive ──────────────────────────────────────────────────────────────
+
+def _apply_patch(extract_dir: Path):
+    """Official patch.tar.gz: fixed gripper widths + joint angles for cfg1/cfg2.
+    Extracted last so its files overwrite the ones from the main archives."""
+    import gdown
+    patch_archive = DATA_ROOT / "RH20T_patch.tar.gz"
+    if not patch_archive.exists():
+        print("[patch] Downloading patch.tar.gz (cfg1/cfg2 gripper+joint fix) …")
+        try:
+            gdown.download(id=PATCH_GDRIVE_ID, output=str(patch_archive), quiet=False)
+        except Exception as exc:
+            print(f"[patch] Download failed: {exc}\n"
+                  f"[patch] WARNING: cfg1/cfg2 gripper widths and joint angles "
+                  f"will be unpatched.")
+            return
+    print(f"[patch] Merging patch into {extract_dir} …")
+    with tarfile.open(patch_archive, "r:gz") as tar:
+        tar.extractall(extract_dir)
+
 
 def try_gdrive(cfg_id: str) -> bool:
     import gdown
@@ -51,6 +70,8 @@ def try_gdrive(cfg_id: str) -> bool:
     print(f"[{cfg_id}] Extracting {archive.name} → {extract_dir} …")
     with tarfile.open(archive, "r:gz") as tar:
         tar.extractall(extract_dir)
+    if cfg_id in PATCHED_CFGS:
+        _apply_patch(extract_dir)
     print(f"[{cfg_id}] Done. Raw data at {extract_dir}")
     return True
 
