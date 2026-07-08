@@ -198,6 +198,11 @@ class RH20tRlds(tfds.core.GeneratorBasedBuilder):
     #   {raw_root}/RH20T_cfg3/   {raw_root}/RH20T_cfg1/ …
     raw_root: Path = _REPO_ROOT / "data" / "RH20T"
 
+    # Inclusive positional range over the sorted scene-folder list
+    # (raw scenes have no LeRobot episode_index). None → no bound.
+    ep_start: int | None = None
+    ep_end: int | None = None
+
     def _cfg_dir(self) -> Path:
         cfg_id = self.builder_config.meta.cfg_id
         root = Path(self.raw_root)
@@ -261,11 +266,15 @@ class RH20tRlds(tfds.core.GeneratorBasedBuilder):
         cfg_id = self.builder_config.meta.cfg_id
         cfg_dir = self._cfg_dir()
         scene_paths = sorted([p for p in cfg_dir.iterdir() if p.is_dir()])
+        n_total = len(scene_paths)
+        lo = 0 if self.ep_start is None else max(0, self.ep_start)
+        hi = n_total - 1 if self.ep_end is None else min(self.ep_end, n_total - 1)
+        scene_paths = scene_paths[lo:hi + 1]
         robot_configs = load_conf(
             str(_REPO_ROOT / "rh20t_api" / "configs" / "configs.json")
         )
         print(f"\n  Config  : {cfg_id}  ({self.builder_config.meta.robot})")
-        print(f"  Scenes  : {len(scene_paths)}")
+        print(f"  Scenes  : {len(scene_paths)} of {n_total} (range {lo}–{hi})")
         return {
             "train": self._generate_examples(scene_paths, robot_configs),
         }

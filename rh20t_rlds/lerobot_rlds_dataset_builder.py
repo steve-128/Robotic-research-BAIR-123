@@ -11,16 +11,18 @@ Usage
     builder = RH20tRldsHF(config="cfg3", data_dir="rlds_output/")
     builder.download_and_prepare()
 
-# Build cfg1:
+# Build cfg1, only episodes 100–199:
+    RH20tRldsHF.ep_start, RH20tRldsHF.ep_end = 100, 199
     builder = RH20tRldsHF(config="cfg1", data_dir="rlds_output/")
     builder.download_and_prepare()
 
-On-disk LeRobot layout (per cfg):
+On-disk LeRobot v3 layout (per cfg):
     {hf_root}/RH20T_hf_{cfg}/
-        meta/info.json
+        meta/info.json                        ← fps, features
         meta/tasks.parquet
-        data/chunk-000/file-000.parquet   ← ALL rows (state, action, index)
-        videos/{cam_key}/chunk-000/file-NNN.mp4
+        meta/episodes/chunk-*/file-*.parquet  ← per-episode length + video map
+        data/chunk-*/file-*.parquet           ← state/action rows (chunked)
+        videos/{cam_key}/chunk-*/file-*.mp4   ← multiple episodes per file
 
 RLDS step schema (same for all cfgs):
     observation.image : uint8 [360, 640, 3]
@@ -69,23 +71,6 @@ class RH20TBuilderConfig(tfds.core.BuilderConfig):
         return f"robot-lev/rh20t_{self.meta.cfg_id}"
 
 
-# ── Video helpers ─────────────────────────────────────────────────────────────
-
-def _mp4_frame_count(path: Path) -> int:
-    c = av.open(str(path))
-    n = c.streams.video[0].frames
-    c.close()
-    return n
-
-
-def _build_cum_ends(mp4s: list[Path]) -> list[int]:
-    cum, total = [], 0
-    for p in mp4s:
-        total += _mp4_frame_count(p)
-        cum.append(total)
-    return cum
-
-
 # ── Metadata helpers ──────────────────────────────────────────────────────────
 
 def _load_tasks(hf_dir: Path) -> dict[int, str]:
@@ -98,7 +83,27 @@ def _load_tasks(hf_dir: Path) -> dict[int, str]:
 
 
 def _load_data(hf_dir: Path) -> pd.DataFrame:
-    return pd.read_parquet(hf_dir / "data" / "chunk-000" / "file-000.parquet")
+    """Concatenate every downloaded data parquet chunk."""
+    files = sorted((hf_dir / "data").rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No data parquets under {hf_dir}/data/")
+    return pd.concat([pd.read_parquet(p) for p in files], ignore_index=True)
+
+
+def _load_episodes_index(hf_dir: Path) -> pd.DataFrame:
+    """LeRobot v3 episodes index: per-episode length + video file mapping."""
+    files = sorted((hf_dir / "meta" / "episodes").rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(
+            f"No episodes index under {hf_dir}/meta/episodes/ — "
+            f"re-run download_rh20t.py to fetch the meta files."
+        )
+    return pd.concat([pd.read_parquet(p) for p in files], ignore_index=True)
+
+
+def _load_fps(hf_dir: Path) -> float:
+    with open(hf_dir / "meta" / "info.json") as f:
+        return float(json.load(f).get("fps", 10))
 
 
 def _find_cam_dir(hf_dir: Path) -> Path | None:
@@ -113,55 +118,38 @@ def _find_cam_dir(hf_dir: Path) -> Path | None:
 
 # ── Streaming episode generator ───────────────────────────────────────────────
 
-def _stream_episodes(
-    df: pd.DataFrame,
-    tasks: dict[int, str],
-    ep_indices: list[int],
-    mp4s: list[Path],
-    cum_ends: list[int],
-):
+def _stream_episodes(plans: dict[Path, list[tuple[int, int, int]]]):
     """
-    Stream mp4 files once and yield (ep_idx, row_list, frames_dict, tasks).
-    At most one episode's frames live in memory at a time.
+    plans: mp4 path → sorted [(start_frame, n_frames, episode_index), …]
+    Decode each mp4 once; yield (episode_index, {frame_index: rgb}) as soon
+    as an episode's frames are complete. One episode buffered at a time.
     """
-    ep_rows: dict[int, list] = {}
-    for ep_idx in ep_indices:
-        sub = df[df["episode_index"] == ep_idx].sort_values("index")
-        ep_rows[ep_idx] = [
-            (int(r["index"]), int(r["frame_index"]), r)
-            for _, r in sub.iterrows()
-        ]
-
-    needed: dict[int, tuple[int, int]] = {}
-    for ep_idx, rows in ep_rows.items():
-        for gidx, lfi, _ in rows:
-            needed[gidx] = (ep_idx, lfi)
-
-    frames_buf: dict[int, dict[int, np.ndarray]] = {e: {} for e in ep_indices}
-    ep_expected = {ep_idx: len(rows) for ep_idx, rows in ep_rows.items()}
-    ep_order = sorted(ep_indices, key=lambda e: ep_rows[e][0][0])
-    next_ptr = 0
-
-    global_pos = 0
-    for mp4_path in mp4s:
+    for mp4_path in sorted(plans):
+        intervals = plans[mp4_path]
+        it = iter(intervals)
+        cur = next(it, None)
+        buf: dict[int, np.ndarray] = {}
+        pos = 0
         container = av.open(str(mp4_path))
         for av_frame in container.decode(video=0):
-            if global_pos in needed:
-                ep_idx, lfi = needed[global_pos]
+            if cur is None:
+                break
+            start, n_frames, ep_idx = cur
+            if start <= pos < start + n_frames:
                 rgb = av_frame.to_ndarray(format="rgb24")
                 if rgb.shape[:2] != (IMAGE_H, IMAGE_W):
                     rgb = cv2.resize(rgb, (IMAGE_W, IMAGE_H),
                                      interpolation=cv2.INTER_LINEAR)
-                frames_buf[ep_idx][lfi] = rgb
-
-                while next_ptr < len(ep_order):
-                    cur = ep_order[next_ptr]
-                    if len(frames_buf[cur]) < ep_expected[cur]:
-                        break
-                    yield cur, ep_rows[cur], frames_buf.pop(cur), tasks
-                    next_ptr += 1
-            global_pos += 1
+                buf[pos - start] = rgb
+                if len(buf) == n_frames:
+                    yield ep_idx, buf
+                    buf = {}
+                    cur = next(it, None)
+            pos += 1
         container.close()
+        if cur is not None and buf:
+            # mp4 ended mid-episode (truncated file) — emit what we have
+            yield cur[2], buf
 
 
 # ── TFDS DatasetBuilder ────────────────────────────────────────────────────────
@@ -184,6 +172,11 @@ class RH20tRldsHF(tfds.core.GeneratorBasedBuilder):
     #   {hf_root}/RH20T_hf_cfg3/   {hf_root}/RH20T_hf_cfg1/ …
     # Set before calling download_and_prepare().
     hf_root: Path = _REPO_ROOT / "data"
+
+    # Inclusive episode_index range to convert (None → no bound).
+    # Set before calling download_and_prepare().
+    ep_start: int | None = None
+    ep_end: int | None = None
 
     def _hf_dir(self) -> Path:
         cfg_id = self.builder_config.meta.cfg_id
@@ -243,49 +236,87 @@ class RH20tRldsHF(tfds.core.GeneratorBasedBuilder):
                 f"No videos under {hf_dir}/videos/.\n"
                 f"Run:  python download_rh20t.py --hf --cfg {cfg_id}"
             )
+        cam_key = cam_dir.name
 
-        mp4s = sorted(cam_dir.rglob("*.mp4"))
-        print(f"\n  Config   : {cfg_id}  ({self.builder_config.meta.robot})")
-        print(f"  Camera   : {cam_dir.name}")
-        print(f"  MP4 files: {len(mp4s)}")
-        print("  Counting frames ...")
-        cum_ends = _build_cum_ends(mp4s)
-        max_global = cum_ends[-1] - 1 if cum_ends else -1
-        print(f"  Total frames : {max_global + 1:,}")
-
+        eps = _load_episodes_index(hf_dir)
+        fps = _load_fps(hf_dir)
         df = _load_data(hf_dir)
         tasks = _load_tasks(hf_dir)
 
-        ep_groups = df[df["index"] <= max_global].groupby("episode_index")["index"].max()
-        ep_indices = sorted(
-            [int(ep) for ep, last in ep_groups.items() if last <= max_global]
-        )
-        print(f"  Episodes fully covered: {len(ep_indices)}")
+        lo = 0 if self.ep_start is None else self.ep_start
+        hi = (int(eps["episode_index"].max())
+              if self.ep_end is None else self.ep_end)
+
+        ck = f"videos/{cam_key}/chunk_index"
+        fk = f"videos/{cam_key}/file_index"
+        ts = f"videos/{cam_key}/from_timestamp"
+        if ck not in eps.columns:
+            raise KeyError(
+                f"Episodes index has no columns for camera {cam_key!r} — "
+                f"downloaded videos do not match meta/episodes."
+            )
+
+        # mp4 path → [(start_frame, n_frames, episode_index), …]
+        plans: dict[Path, list[tuple[int, int, int]]] = {}
+        n_missing_video = n_missing_rows = 0
+        have_rows = set(df["episode_index"].unique().tolist())
+        for _, row in eps.iterrows():
+            ep_idx = int(row["episode_index"])
+            if not (lo <= ep_idx <= hi):
+                continue
+            mp4 = (cam_dir / f"chunk-{int(row[ck]):03d}"
+                   / f"file-{int(row[fk]):03d}.mp4")
+            if not mp4.exists():
+                n_missing_video += 1
+                continue
+            if ep_idx not in have_rows:
+                n_missing_rows += 1
+                continue
+            start_frame = int(round(float(row[ts]) * fps))
+            plans.setdefault(mp4, []).append(
+                (start_frame, int(row["length"]), ep_idx)
+            )
+        for v in plans.values():
+            v.sort()
+        n_planned = sum(len(v) for v in plans.values())
+
+        print(f"\n  Config   : {cfg_id}  ({self.builder_config.meta.robot})")
+        print(f"  Camera   : {cam_key}")
+        print(f"  Range    : episodes {lo}–{hi}")
+        print(f"  Convert  : {n_planned} episodes across {len(plans)} mp4 file(s)")
+        if n_missing_video:
+            print(f"  Skipped  : {n_missing_video} (video file not downloaded)")
+        if n_missing_rows:
+            print(f"  Skipped  : {n_missing_rows} (state/action parquet missing)")
+        if n_planned == 0:
+            raise RuntimeError(
+                f"No convertible episodes in range [{lo}, {hi}] — "
+                f"run download_rh20t.py with a matching --ep-start/--ep-end."
+            )
 
         return {
-            "train": self._generate_examples(df, tasks, ep_indices, mp4s, cum_ends),
+            "train": self._generate_examples(df, tasks, plans),
         }
 
     def _generate_examples(
         self,
         df: pd.DataFrame,
         tasks: dict[int, str],
-        ep_indices: list[int],
-        mp4s: list[Path],
-        cum_ends: list[int],
+        plans: dict[Path, list[tuple[int, int, int]]],
     ) -> Iterator:
         cfg_id = self.builder_config.meta.cfg_id
 
-        for ep_idx, row_list, frames, tasks_ref in _stream_episodes(
-            df, tasks, ep_indices, mp4s, cum_ends
-        ):
-            task_idx = int(row_list[0][2]["task_index"])
-            lang = tasks_ref.get(task_idx, "")
-            n = len(row_list)
+        for ep_idx, frames in _stream_episodes(plans):
+            sub = df[df["episode_index"] == ep_idx].sort_values("frame_index")
+            if sub.empty:
+                continue
+            task_idx = int(sub.iloc[0]["task_index"])
+            lang = tasks.get(task_idx, "")
+            n = len(sub)
 
             steps: list[dict] = []
-            for i, (_, lfi, row) in enumerate(row_list):
-                frame = frames.get(lfi)
+            for i, (_, row) in enumerate(sub.iterrows()):
+                frame = frames.get(int(row["frame_index"]))
                 if frame is None:
                     continue
                 is_last = bool(i == n - 1)
