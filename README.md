@@ -161,6 +161,40 @@ Queried the HuggingFace datasets API for each `robot-lev/rh20t_{cfg}` repo:
 
 ---
 
+## Verifying a build
+
+```bash
+# sample-check 10 episodes of the cfg1 HF build (default):
+python verify_rlds.py --cfg cfg1
+
+# deeper sample, or a raw-source build, or an explicit path:
+python verify_rlds.py --cfg cfg1 --episodes 50
+python verify_rlds.py --cfg cfg2 --source raw
+python verify_rlds.py --path /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/1.0.0
+```
+
+Per sampled episode it checks: feature shapes/dtypes, RLDS flag consistency
+(`is_first`/`is_last`/`is_terminal`/`discount`), image sanity (uint8, right
+size, not black/frozen), state/action finiteness, and language presence.
+
+When the HF source is still on disk it also **cross-checks faithfulness**:
+state/action must match the source parquet rows bit-exactly, step count must
+equal the row count, and the instruction must match `tasks.parquet` — this is
+what catches episode/frame misalignment, not just formatting errors.
+Exit code 0 = PASS, 1 = problems (listed).
+
+Quick manual checks, independent of the script:
+```bash
+# episode count actually written:
+python -c "import tensorflow_datasets as tfds; \
+  print(tfds.builder_from_directory('/data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/1.0.0').info.splits['train'].num_examples)"
+# a finished build has dataset_info.json + features.json + tfrecord shards,
+# and NO leftover incomplete.* sibling directory.
+ls /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/
+```
+
+---
+
 ## Notes & caveats
 
 - **Google Drive is unreliable for large public files.** `gdown` frequently hits
@@ -185,6 +219,7 @@ Queried the HuggingFace datasets API for each `robot-lev/rh20t_{cfg}` repo:
 |------|---------|
 | `download_rh20t.py` | Download a config (GDrive→HF fallback), then auto-build RLDS |
 | `build_rlds.py` | Convert downloaded data to RLDS; source auto-detected |
+| `verify_rlds.py` | Validate a built RLDS dataset (consistency + source faithfulness) |
 | `rh20t_rlds/_config.py` | Per-config metadata (robot, dims, GDrive IDs, patch) |
 | `rh20t_rlds/lerobot_rlds_dataset_builder.py` | TFDS builder for the HF source |
 | `rh20t_rlds/rh20t_rlds_dataset_builder.py` | TFDS builder for the raw source |
