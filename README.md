@@ -164,7 +164,7 @@ Queried the HuggingFace datasets API for each `robot-lev/rh20t_{cfg}` repo:
 ## Verifying a build
 
 ```bash
-# sample-check 10 episodes of the cfg1 HF build (default):
+# sample-check 30 episodes of the cfg1 HF build (default):
 python verify_rlds.py --cfg cfg1
 
 # deeper sample, or a raw-source build, or an explicit path:

@@ -104,8 +104,8 @@ def main() -> int:
     ap.add_argument("--path", default=None,
                     help="Explicit path to the 1.0.0 dataset dir "
                          "(overrides --cfg/--source)")
-    ap.add_argument("--episodes", type=int, default=10,
-                    help="How many episodes to sample-check (default: 10)")
+    ap.add_argument("--episodes", type=int, default=30,
+                    help="How many episodes to sample-check (default: 30)")
     ap.add_argument("--no-source-check", action="store_true",
                     help="Skip the cross-check against the source parquets")
     args = ap.parse_args()
