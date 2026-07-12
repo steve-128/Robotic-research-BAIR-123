@@ -2,22 +2,22 @@
 Verify a built RH20T RLDS dataset is correct and loadable.
 
 Loads the TFDS dataset back and checks, per sampled episode:
-  • feature shapes / dtypes match the declared info
-  • RLDS step flags are consistent
+  - feature shapes / dtypes match the declared info
+  - RLDS step flags are consistent
         is_first : true only on step 0
         is_last / is_terminal : true only on the final step
         discount : 1.0 except 0.0 on the final step
-  • images are real (uint8, correct HxW, non-constant — not all-black/frozen)
-  • state / action are finite (no NaN/Inf) and not all-zero
-  • language_instruction present (warn if empty)
-  • each episode has >= 2 steps
+  - images are real (uint8, correct HxW, non-constant — not all-black/frozen)
+  - state / action are finite (no NaN/Inf) and not all-zero
+  - language_instruction present (warn if empty)
+  - each episode has >= 2 steps
 
 Source cross-check (HF source only, on by default when the download is still
 on disk; skipped otherwise):
-  • per sampled episode, state/action arrays must EXACTLY match the parquet
+  - per sampled episode, state/action arrays must EXACTLY match the parquet
     rows for that episode_index (proves no row/episode misalignment)
-  • step count must equal the parquet row count for the episode
-  • language_instruction must match tasks.parquet for the episode's task_index
+  - step count must equal the parquet row count for the episode
+  - language_instruction must match tasks.parquet for the episode's task_index
 
 Exit code 0 = all good, 1 = problems found.
 
@@ -33,6 +33,10 @@ Usage
 import argparse
 import sys
 from pathlib import Path
+
+# tolerate non-UTF8 consoles (Windows cp1252) — never crash on printing
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="replace")
 
 import numpy as np
 import tensorflow_datasets as tfds
@@ -81,10 +85,10 @@ def _check_against_source(tag, steps, eid, df, tasks, problems, warnings):
     rlds_act = np.stack([s["action"] for s in steps])
     if not np.array_equal(rlds_state, src_state):
         problems.append(f"{tag}: observation.state != source parquet "
-                        f"(max|Δ|={np.abs(rlds_state - src_state).max():.3g})")
+                        f"(max|delta|={np.abs(rlds_state - src_state).max():.3g})")
     if not np.array_equal(rlds_act, src_act):
         problems.append(f"{tag}: action != source parquet "
-                        f"(max|Δ|={np.abs(rlds_act - src_act).max():.3g})")
+                        f"(max|delta|={np.abs(rlds_act - src_act).max():.3g})")
     if tasks:
         src_lang = str(tasks.get(int(sub.iloc[0]["task_index"]), ""))
         lang = steps[0].get("language_instruction", b"")
@@ -183,7 +187,7 @@ def main() -> int:
                    - steps[-1]["observation"]["image"].astype(np.int16)).mean()
         if d < 0.5:
             warnings.append(f"{tag}: first and last frame nearly identical "
-                            f"(mean|Δ|={d:.2f})")
+                            f"(mean|delta|={d:.2f})")
         img_means.append(float(steps[0]["observation"]["image"].mean()))
 
         # --- state / action numeric sanity -----------------------------------
@@ -213,27 +217,113 @@ def main() -> int:
         checked += 1
 
     # --- report --------------------------------------------------------------
-    print(f"\nChecked {checked} episode(s), {tot_steps} steps total "
+    print(f"\nChecked {checked} episode(s) of {n_eps} in the split "
+          f"({checked / max(n_eps, 1):.1%} sample), {tot_steps} steps total "
           f"(mean {tot_steps / max(checked,1):.0f} steps/episode).")
     if img_means:
         print(f"Image brightness across episodes: "
               f"min={min(img_means):.0f} max={max(img_means):.0f} "
-              f"(healthy ~ spread of real scenes; all-equal ⇒ suspicious).")
+              f"(healthy ~ spread of real scenes; all-equal => suspicious).")
 
     if warnings:
         print(f"\n{len(warnings)} warning(s):")
-        for w in warnings[:20]:
-            print(f"  ⚠ {w}")
+        for w in warnings:
+            print(f"  WARN {w}")
 
     if problems:
-        print(f"\n{len(problems)} PROBLEM(S):")
-        for p in problems[:40]:
-            print(f"  ✗ {p}")
-        print("\nRESULT: FAIL")
+        print(f"\n{len(problems)} PROBLEM(S) — reasons:")
+        for p in problems:
+            print(f"  X {p}")
+            hint = _hint(p)
+            if hint:
+                print(f"      -> {hint}")
+        # one-line failure summary grouped by kind
+        kinds: dict[str, int] = {}
+        for p in problems:
+            kinds[_kind(p)] = kinds.get(_kind(p), 0) + 1
+        summary = ", ".join(f"{v}x {k}" for k, v in sorted(kinds.items()))
+        print(f"\nRESULT: FAIL — {len(problems)} problem(s): {summary}")
         return 1
 
     print("\nRESULT: PASS — dataset loads and all sampled episodes are consistent.")
+
+    # even on PASS, surface anything that could still hide a failure
+    caveats: list[str] = []
+    if checked < n_eps:
+        caveats.append(f"only {checked}/{n_eps} episodes sampled — rerun with "
+                       f"--episodes {n_eps} for full coverage")
+    if src_df is None and args.source == "hf" and not args.no_source_check:
+        caveats.append("source cross-check SKIPPED (source parquets not on "
+                       "disk) — faithfulness vs the download was NOT verified")
+    if args.no_source_check:
+        caveats.append("source cross-check disabled via --no-source-check — "
+                       "faithfulness vs the download was NOT verified")
+    if args.source == "raw":
+        caveats.append("raw-source build: no parquet ground truth exists, so "
+                       "only internal consistency was checked")
+    if warnings:
+        caveats.append(f"{len(warnings)} warning(s) above — not failures, but "
+                       f"worth a look (e.g. static scenes, missing language)")
+    if caveats:
+        print("Potential weak spots (not failures):")
+        for c in caveats:
+            print(f"  - {c}")
     return 0
+
+
+def _kind(problem: str) -> str:
+    """Short category label for a problem message."""
+    for key, label in (
+        ("image ~constant", "constant-image"),
+        ("image dtype", "image-dtype"),
+        ("image shape", "image-shape"),
+        ("!= source parquet", "source-mismatch"),
+        ("parquet rows", "row-count-mismatch"),
+        ("language", "language-mismatch"),
+        ("NaN/Inf", "nan-inf"),
+        ("all zero", "all-zero"),
+        ("is_first", "rlds-flags"),
+        ("is_last", "rlds-flags"),
+        ("is_terminal", "rlds-flags"),
+        ("discount", "rlds-flags"),
+        ("step(s)", "too-few-steps"),
+    ):
+        if key in problem:
+            return label
+    return "other"
+
+
+def _hint(problem: str) -> str:
+    """Likely cause / what to do, per problem category."""
+    return {
+        "constant-image":
+            "black/frozen frames. Often a dead or covered camera in the SOURCE "
+            "recording (known for some episodes) — decode the source mp4 "
+            "segment to confirm; if the source is also black, the conversion "
+            "is faithful and the episode should just be excluded from training.",
+        "source-mismatch":
+            "state/action differs from the download parquets — episode/row "
+            "misalignment in the conversion. Rebuild after deleting the "
+            "output dir; if it persists, this is a builder bug.",
+        "row-count-mismatch":
+            "steps dropped during conversion (missing frames in the video?) — "
+            "check the build log for skipped-episode warnings.",
+        "language-mismatch":
+            "instruction doesn't match tasks.parquet — task_index mapping bug.",
+        "nan-inf":
+            "corrupt numeric data — check the source parquet for the episode.",
+        "all-zero":
+            "sensor stream missing/zeroed for the whole episode in the source.",
+        "rlds-flags":
+            "step bookkeeping wrong (is_first/is_last/discount) — builder bug.",
+        "image-dtype":
+            "wrong dtype in serialized images — schema/builder mismatch.",
+        "image-shape":
+            "unexpected resolution — resize step failed or schema mismatch.",
+        "too-few-steps":
+            "episode nearly empty — most frames/rows were dropped; check the "
+            "build log for this episode.",
+    }.get(_kind(problem), "")
 
 
 if __name__ == "__main__":
