@@ -116,26 +116,31 @@ def main() -> int:
               f"      (build not finished, or wrong --cfg/--source/--path)")
         return 1
 
-    print(f"Loading: {ds_dir}")
+    print(f"[1/4] Loading dataset metadata via tfds.builder_from_directory()")
+    print(f"      {ds_dir}")
     builder = tfds.builder_from_directory(str(ds_dir))
     info = builder.info
     n_eps = info.splits["train"].num_examples
-    print(f"  Episodes in split : {n_eps}")
-    print(f"  Features          :")
+    print(f"      Episodes in split : {n_eps}")
+    print(f"      Features          :")
     step = info.features["steps"]
     for k in ("observation", "action"):
-        print(f"    {k}: {step[k]}")
+        print(f"        {k}: {step[k]}")
 
+    print(f"[2/4] Opening tf.data pipeline via builder.as_dataset(split='train')")
     ds = builder.as_dataset(split="train")
 
     src_df = src_tasks = None
     if args.source == "hf" and not args.no_source_check:
+        print(f"[3/4] Loading source parquets for the faithfulness cross-check")
         src_df, src_tasks = _load_source(args.cfg)
         if src_df is None:
-            print("  (source parquets not on disk — skipping source cross-check)")
+            print("      source parquets not on disk — cross-check SKIPPED")
         else:
-            print(f"  Source check      : ON "
-                  f"({src_df['episode_index'].nunique()} episodes in parquets)")
+            print(f"      cross-check ON: {src_df['episode_index'].nunique()} "
+                  f"episodes, {len(src_df):,} rows in parquets")
+    else:
+        print(f"[3/4] Source cross-check disabled — skipping")
 
     problems: list[str] = []
     warnings: list[str] = []
@@ -143,7 +148,11 @@ def main() -> int:
     img_means: list[float] = []
     checked = 0
 
+    n_to_check = min(args.episodes, n_eps)
+    print(f"[4/4] Checking {n_to_check} episode(s) "
+          f"(flags, images, numerics{', source match' if src_df is not None else ''}) …")
     for ep in ds.take(args.episodes):
+        p0, w0 = len(problems), len(warnings)
         steps = list(ep["steps"].as_numpy_iterator())
         eid = ep["episode_metadata"].get("episode_index")
         tag = f"ep[{int(eid)}]" if eid is not None else f"ep#{checked}"
@@ -153,6 +162,7 @@ def main() -> int:
         if n < 2:
             problems.append(f"{tag}: only {n} step(s)")
             checked += 1
+            print(f"      [{checked}/{n_to_check}] {tag}: {n} steps — 1 PROBLEM(S)")
             continue
 
         # --- RLDS flag consistency -------------------------------------------
@@ -215,6 +225,11 @@ def main() -> int:
                                   problems, warnings)
 
         checked += 1
+        dp, dw = len(problems) - p0, len(warnings) - w0
+        status = "ok" if dp == 0 else f"{dp} PROBLEM(S)"
+        if dw:
+            status += f", {dw} warning(s)"
+        print(f"      [{checked}/{n_to_check}] {tag}: {n} steps — {status}")
 
     # --- report --------------------------------------------------------------
     print(f"\nChecked {checked} episode(s) of {n_eps} in the split "
