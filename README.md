@@ -173,15 +173,25 @@ python verify_rlds.py --cfg cfg2 --source raw
 python verify_rlds.py --path /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/1.0.0
 ```
 
-Per sampled episode it checks: feature shapes/dtypes, RLDS flag consistency
-(`is_first`/`is_last`/`is_terminal`/`discount`), image sanity (uint8, right
-size, not black/frozen), state/action finiteness, and language presence.
+### How each sampled episode is verified
 
-When the HF source is still on disk it also **cross-checks faithfulness**:
-state/action must match the source parquet rows bit-exactly, step count must
-equal the row count, and the instruction must match `tasks.parquet` — this is
-what catches episode/frame misalignment, not just formatting errors.
-Exit code 0 = PASS, 1 = problems (listed).
+1. **Materialize** — the episode is read via the TFDS/TensorFlow API, forcing
+   TFRecord read + JPEG decode of every frame (corrupt data throws here).
+2. **Length** — at least 2 steps.
+3. **RLDS flags** — `is_first` only at step 0; `is_last`/`is_terminal` only at
+   the final step; `discount` 1.0 everywhere except 0.0 at the end.
+4. **Images** — on first/middle/last frame: uint8, `(360,640,3)`, `std ≥ 1`
+   (catches black/dead camera); first vs last frame must differ (not frozen).
+5. **Numerics** — state/action finite (no NaN/Inf), not all-zero.
+6. **Language** — instruction non-empty (warning).
+7. **Source faithfulness** (HF source on disk): step count == parquet row
+   count; state/action match the parquet rows **bit-exactly**; instruction
+   matches `tasks.parquet` — this catches episode/frame misalignment, not
+   just formatting errors.
+
+Failures are printed with a likely-cause hint and a categorized summary;
+a PASS also lists weak spots (sample coverage, skipped source check).
+Exit code 0 = PASS, 1 = problems.
 
 Quick manual checks, independent of the script:
 ```bash
