@@ -7,7 +7,9 @@ Loads the TFDS dataset back and checks, per sampled episode:
         is_first : true only on step 0
         is_last / is_terminal : true only on the final step
         discount : 1.0 except 0.0 on the final step
-  - images are real (uint8, correct HxW, non-constant — not all-black/frozen)
+  - images are real (uint8, correct HxW). Black/constant frames are reported
+    as a WARNING (known dead-camera issue in the source mirror) together with
+    the source mp4 file and the episode's start-end time and duration.
   - state / action are finite (no NaN/Inf) and not all-zero
   - language_instruction present (warn if empty)
   - each episode has >= 2 steps
@@ -68,6 +70,35 @@ def _load_source(cfg: str):
         if "task" in tdf.columns and "task_index" in tdf.columns:
             tasks = dict(zip(tdf["task_index"], tdf["task"]))
     return df, tasks
+
+
+def _load_video_locations(cfg: str) -> dict[int, tuple[str, float, float]] | None:
+    """episode_index → (mp4 relpath, from_s, to_s) for the camera on disk.
+    Used to point at the source clip when a black/frozen episode is found."""
+    hf_dir = DATA_ROOT / f"RH20T_hf_{cfg}"
+    files = sorted((hf_dir / "meta" / "episodes").rglob("*.parquet"))
+    vroot = hf_dir / "videos"
+    if not files or not vroot.is_dir():
+        return None
+    cam = None
+    for d in sorted(vroot.iterdir()):
+        if d.is_dir() and any(d.rglob("*.mp4")):
+            cam = d.name
+            break
+    import pandas as pd
+    eps = pd.concat([pd.read_parquet(p) for p in files], ignore_index=True)
+    ck = f"videos/{cam}/chunk_index"
+    if cam is None or ck not in eps.columns:
+        return None
+    locs: dict[int, tuple[str, float, float]] = {}
+    for _, r in eps.iterrows():
+        locs[int(r["episode_index"])] = (
+            f"videos/{cam}/chunk-{int(r[ck]):03d}"
+            f"/file-{int(r[f'videos/{cam}/file_index']):03d}.mp4",
+            float(r[f"videos/{cam}/from_timestamp"]),
+            float(r[f"videos/{cam}/to_timestamp"]),
+        )
+    return locs
 
 
 def _check_against_source(tag, steps, eid, df, tasks, problems, warnings):
@@ -131,6 +162,7 @@ def main() -> int:
     ds = builder.as_dataset(split="train")
 
     src_df = src_tasks = None
+    video_locs = None
     if args.source == "hf" and not args.no_source_check:
         print(f"[3/4] Loading source parquets for the faithfulness cross-check")
         src_df, src_tasks = _load_source(args.cfg)
@@ -139,6 +171,10 @@ def main() -> int:
         else:
             print(f"      cross-check ON: {src_df['episode_index'].nunique()} "
                   f"episodes, {len(src_df):,} rows in parquets")
+        video_locs = _load_video_locations(args.cfg)
+        if video_locs:
+            print(f"      episode->video map loaded "
+                  f"({len(video_locs)} episodes) for locating bad frames")
     else:
         print(f"[3/4] Source cross-check disabled — skipping")
 
@@ -182,6 +218,7 @@ def main() -> int:
 
         # --- image sanity (first + middle + last) ----------------------------
         H, W = info.features["steps"]["observation"]["image"].shape[:2]
+        const_steps = []
         for j in (0, n // 2, n - 1):
             img = steps[j]["observation"]["image"]
             if img.dtype != np.uint8:
@@ -190,8 +227,19 @@ def main() -> int:
                 problems.append(f"{tag} step{j}: image shape {img.shape} "
                                 f"!= {(H, W, 3)}")
             if img.std() < 1.0:
-                problems.append(f"{tag} step{j}: image ~constant "
-                                f"(std={img.std():.2f}) — black/frozen frame?")
+                const_steps.append(j)
+        if const_steps:
+            # black/frozen camera — known SOURCE data issue, so a warning,
+            # located in the source video so it can be inspected directly.
+            loc = ""
+            if video_locs and eid is not None and int(eid) in video_locs:
+                mp4, t0, t1 = video_locs[int(eid)]
+                loc = (f"\n        source: {mp4} @ {t0:.1f}s-{t1:.1f}s "
+                       f"(duration {t1 - t0:.1f}s)")
+            warnings.append(
+                f"{tag}: black/constant frames at steps {const_steps} "
+                f"(std<1) — likely dead/covered camera in the source; "
+                f"exclude from training{loc}")
         # frames should differ across the episode (not a frozen video)
         d = np.abs(steps[0]["observation"]["image"].astype(np.int16)
                    - steps[-1]["observation"]["image"].astype(np.int16)).mean()

@@ -20,8 +20,8 @@ Usage
 -----
     python download_rh20t.py                          # auto, cfg3, ALL episodes
     python download_rh20t.py --cfg cfg1               # cfg1 via auto (GDrive→HF)
-    python download_rh20t.py --hf --cfg cfg5          # cfg5 from HF, ALL episodes
-    python download_rh20t.py --gdrive --cfg cfg2      # cfg2 from Google Drive
+    python download_rh20t.py --hf --cfg cfg5          # HF only, ALL episodes
+    python download_rh20t.py --gdrive --cfg cfg2      # GDrive only (no HF fallback)
     python download_rh20t.py --hf --ep-start 0 --ep-end 99    # episodes 0–99
     python download_rh20t.py --hf --ep-start 500              # episode 500 → end
     python download_rh20t.py --skip-build             # download only, no RLDS
@@ -187,9 +187,9 @@ def main():
         help="Which configuration to download (default: cfg3)",
     )
     parser.add_argument("--gdrive", action="store_true",
-                        help="Try Google Drive only")
+                        help="Google Drive ONLY — no HuggingFace fallback")
     parser.add_argument("--hf", action="store_true",
-                        help="Use HuggingFace (skip Google Drive)")
+                        help="HuggingFace ONLY — skip Google Drive")
     parser.add_argument(
         "--ep-start", type=int, default=None,
         help="First episode_index to download/convert (default: 0)",
@@ -226,12 +226,13 @@ def main():
         source_used = "hf"
     elif args.gdrive:
         ok = try_gdrive(args.cfg)
-        if ok:
-            source_used = "raw"
-        else:
-            print("Falling back to HuggingFace …")
-            download_hf(args.cfg, ep_start, ep_end)
-            source_used = "hf"
+        if not ok:
+            raise SystemExit(
+                f"[{args.cfg}] Google Drive download failed. "
+                f"--gdrive does not fall back to HuggingFace; "
+                f"retry later or use --hf."
+            )
+        source_used = "raw"
     else:
         print(f"[{args.cfg}] Trying Google Drive first, then HuggingFace …")
         ok = try_gdrive(args.cfg)
