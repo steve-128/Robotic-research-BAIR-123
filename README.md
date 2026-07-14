@@ -9,8 +9,11 @@ Two data sources are supported and auto-detected:
 
 | Source | What it is | Used when |
 |--------|------------|-----------|
-| **HuggingFace** (`robot-lev/rh20t_{cfg}`) | LeRobot v3 reformat (parquet + AV1 mp4) | default / `--hf`; streams cleanly, supports episode ranges |
-| **Google Drive** (`RH20T_cfg{n}.tar.gz`) | authors' original 640×360 RGB archive | `--gdrive`; ~2× smaller but rate-limited |
+| **HuggingFace** (`robot-lev/rh20t_{cfg}`) | LeRobot v3 reformat (parquet + AV1 mp4) | `--hf` = HF **only**; also the fallback of the no-flag default. Streams cleanly, supports episode ranges |
+| **Google Drive** (`RH20T_cfg{n}.tar.gz`) | authors' original 640×360 RGB archive | `--gdrive` = GDrive **only** (fails hard, no HF fallback); ~2× smaller but rate-limited |
+
+With **no flag**, Google Drive is tried first and HuggingFace is used as the
+fallback if it fails.
 
 ---
 
@@ -180,8 +183,11 @@ python verify_rlds.py --path /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/1.0.0
 2. **Length** — at least 2 steps.
 3. **RLDS flags** — `is_first` only at step 0; `is_last`/`is_terminal` only at
    the final step; `discount` 1.0 everywhere except 0.0 at the end.
-4. **Images** — on first/middle/last frame: uint8, `(360,640,3)`, `std ≥ 1`
-   (catches black/dead camera); first vs last frame must differ (not frozen).
+4. **Images** — on first/middle/last frame: uint8, `(360,640,3)`.
+   Black/constant frames (`std < 1`) are a **warning**, not a failure — they
+   are a known dead-camera issue in the source mirror, and the warning names
+   the source mp4 plus the episode's start–end time and duration so the clip
+   can be inspected directly. First vs last frame must differ (not frozen).
 5. **Numerics** — state/action finite (no NaN/Inf), not all-zero.
 6. **Language** — instruction non-empty (warning).
 7. **Source faithfulness** (HF source on disk): step count == parquet row
@@ -211,6 +217,12 @@ ls /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/
   the "quota exceeded / can't scan for viruses" wall on the multi-GB archives and
   cannot resume. Prefer `--hf`. If you must use the tarball, download it directly
   on the compute node (`gdown --fuzzy "<share-url>"`) rather than via your laptop.
+  Note `--gdrive` fails hard (no HF fallback); only the no-flag default falls back.
+- **Some episodes have a dead camera.** A few episodes in the HF mirror are
+  all-black for the primary camera (observed: cfg3 ep 35/36/53–55, cfg4 ep 617)
+  even though their state/action are valid — the conversion carries them through
+  faithfully. `verify_rlds.py` reports them as warnings with the source clip
+  location; exclude them from vision training.
 - **cfg1/cfg2 patch.** The raw (`--gdrive`) source for cfg1 and cfg2 needs the
   official `patch.tar.gz` (corrected gripper widths + joint angles); the
   downloader fetches and merges it automatically.
@@ -227,7 +239,7 @@ ls /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/
 
 | File | Purpose |
 |------|---------|
-| `download_rh20t.py` | Download a config (GDrive→HF fallback), then auto-build RLDS |
+| `download_rh20t.py` | Download a config (`--hf` / `--gdrive` exclusive; default GDrive→HF), then auto-build RLDS |
 | `build_rlds.py` | Convert downloaded data to RLDS; source auto-detected |
 | `verify_rlds.py` | Validate a built RLDS dataset (consistency + source faithfulness) |
 | `rh20t_rlds/_config.py` | Per-config metadata (robot, dims, GDrive IDs, patch) |
