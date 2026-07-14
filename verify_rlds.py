@@ -28,11 +28,13 @@ Usage
     python verify_rlds.py --cfg cfg1                 # HF build (default)
     python verify_rlds.py --cfg cfg1 --source raw    # raw build
     python verify_rlds.py --cfg cfg1 --episodes 20   # sample 20 episodes
+    python verify_rlds.py --cfg cfg1 --seed 12345    # reproduce a prior sample
     python verify_rlds.py --cfg cfg1 --no-source-check   # skip parquet check
     python verify_rlds.py --path /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/1.0.0
 """
 
 import argparse
+import random
 import sys
 from pathlib import Path
 
@@ -139,6 +141,10 @@ def main() -> int:
                     help="How many episodes to sample-check (default: 30)")
     ap.add_argument("--no-source-check", action="store_true",
                     help="Skip the cross-check against the source parquets")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="Random seed for episode sampling. Default: a fresh "
+                         "seed is drawn and printed; pass it back to "
+                         "reproduce the exact same sample.")
     args = ap.parse_args()
 
     ds_dir = Path(args.path) if args.path else _dataset_dir(args.cfg, args.source)
@@ -158,8 +164,18 @@ def main() -> int:
     for k in ("observation", "action"):
         print(f"        {k}: {step[k]}")
 
+    seed = args.seed if args.seed is not None else random.randrange(2**31)
     print(f"[2/4] Opening tf.data pipeline via builder.as_dataset(split='train')")
-    ds = builder.as_dataset(split="train")
+    print(f"      sampling seed : {seed}"
+          f"  (re-run with --seed {seed} to reproduce this exact sample)")
+    ds = builder.as_dataset(
+        split="train",
+        shuffle_files=True,
+        read_config=tfds.ReadConfig(shuffle_seed=seed),
+    )
+    # small element-level shuffle for within-shard randomness (episode records
+    # hold their steps lazily, so the buffer stays light)
+    ds = ds.shuffle(64, seed=seed, reshuffle_each_iteration=False)
 
     src_df = src_tasks = None
     video_locs = None

@@ -174,7 +174,13 @@ python verify_rlds.py --cfg cfg1
 python verify_rlds.py --cfg cfg1 --episodes 50
 python verify_rlds.py --cfg cfg2 --source raw
 python verify_rlds.py --path /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/1.0.0
+
+# reproduce a previous run's exact sample (each run prints its seed):
+python verify_rlds.py --cfg cfg1 --seed 12345
 ```
+
+Episodes are sampled **randomly** each run; the seed is printed so any run
+can be reproduced exactly with `--seed`.
 
 ### How each sampled episode is verified
 
