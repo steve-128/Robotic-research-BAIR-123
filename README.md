@@ -19,13 +19,33 @@ fallback if it fails.
 
 ## Setup
 
+Create the conda env from the pinned spec (Python 3.11 + TensorFlow 2.21,
+tensorflow-datasets 4.9.10, PyAV, OpenCV, pandas/pyarrow, gdown,
+huggingface_hub, transforms3d):
+
 ```bash
-conda activate rh20t_rlds          # Python 3.11
-# key deps: tensorflow, tensorflow-datasets, av (PyAV), pandas,
-#           opencv-python, gdown, huggingface_hub
+conda env create -f environment.yml     # first time only
+conda activate rh20t_rlds
 ```
 
-The `rh20t_api/` submodule (scene loader for the raw source) is vendored in-repo.
+Already have the env? Just `conda activate rh20t_rlds`. To update it after
+`environment.yml` changes: `conda env update -f environment.yml --prune`.
+
+Quick check that it works:
+```bash
+python -c "import tensorflow, tensorflow_datasets, av, cv2, pandas; print('ok')"
+python download_rh20t.py --help
+```
+
+Notes before your first run:
+- **No GPU needed.** Downloading and conversion are CPU + disk bound. TensorFlow
+  will print `Error loading CUDA libraries … GPU will not be used` on CPU-only
+  machines — harmless, ignore it.
+- **Check disk space first** — `df -h` on the volume holding the data root. A
+  full config needs the download **plus** ~4× that for the RLDS output
+  (e.g. cfg1 ≈ 45 GB + ≈ 180 GB). See [sizes](#estimated-download-sizes).
+- `rh20t_api/` (the scene loader used by the Google Drive source) is vendored
+  in-repo — nothing extra to install.
 
 ---
 
@@ -252,3 +272,5 @@ ls /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/
 | `rh20t_rlds/lerobot_rlds_dataset_builder.py` | TFDS builder for the HF source |
 | `rh20t_rlds/rh20t_rlds_dataset_builder.py` | TFDS builder for the raw source |
 | `rh20t_api/` | Vendored RH20T scene loader (raw source) |
+| `environment.yml` | Pinned conda env spec (`conda env create -f environment.yml`) |
+| `LOCATIONS.md` | Quick reference: where files live, what gets saved |
