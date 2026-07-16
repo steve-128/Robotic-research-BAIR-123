@@ -19,6 +19,11 @@ fallback if it fails.
 
 ## Setup
 
+```bash
+git clone https://github.com/steve-128/Robotic-research-BAIR-123.git
+cd Robotic-research-BAIR-123
+```
+
 Create the conda env from the pinned spec (Python 3.11 + TensorFlow 2.21,
 tensorflow-datasets 4.9.10, PyAV, OpenCV, pandas/pyarrow, gdown,
 huggingface_hub, transforms3d):
@@ -27,6 +32,18 @@ huggingface_hub, transforms3d):
 conda env create -f environment.yml     # first time only
 conda activate rh20t_rlds
 ```
+
+**For the Google Drive (`--gdrive`) path only**, also clone the official
+RH20T API [rh20t/rh20t_api](https://github.com/rh20t/rh20t_api) into the repo
+root — the scripts import it from `<repo>/rh20t_api/`, so the directory name
+must match exactly:
+
+```bash
+git clone https://github.com/rh20t/rh20t_api.git    # run from the repo root
+```
+
+It is git-ignored (not committed, not a submodule), so a fresh clone will not
+have it. The `--hf` path never touches it and works without this step.
 
 Already have the env? Just `conda activate rh20t_rlds`. To update it after
 `environment.yml` changes: `conda env update -f environment.yml --prune`.
@@ -44,8 +61,31 @@ Notes before your first run:
 - **Check disk space first** — `df -h` on the volume holding the data root. A
   full config needs the download **plus** ~4× that for the RLDS output
   (e.g. cfg1 ≈ 45 GB + ≈ 180 GB). See [sizes](#estimated-download-sizes).
-- `rh20t_api/` (the scene loader used by the Google Drive source) is vendored
-  in-repo — nothing extra to install.
+### Repository layout after cloning
+
+```
+Robotic-research-BAIR-123/
+├── README.md
+├── LOCATIONS.md                 # where files live / what gets saved
+├── environment.yml              # pinned conda env spec
+├── download_rh20t.py            # download (+ auto-build)
+├── build_rlds.py                # convert to RLDS
+├── verify_rlds.py               # validate a built dataset
+├── rh20t_rlds/
+│   ├── _config.py                       # per-cfg metadata (robot, dims, GDrive IDs)
+│   ├── lerobot_rlds_dataset_builder.py  # TFDS builder — HF source
+│   └── rh20t_rlds_dataset_builder.py    # TFDS builder — raw/GDrive source
+└── rh20t_api/                   # NOT in the clone — git clone it here (see above)
+    ├── configs/configs.json         # per-cfg robot config used by the raw builder
+    ├── models/                      # robot URDFs/meshes
+    └── rh20t_api/
+        ├── scene.py                 # RH20TScene loader
+        ├── extract.py               # color.mp4 -> color/*.jpg
+        └── configurations.py, transforms.py, …
+```
+
+Downloaded data and built datasets do **not** live here — they go to the data
+root, `../../../data/rh20t/` (see [Where files go](#where-files-go)).
 
 ---
 
@@ -271,6 +311,6 @@ ls /data/rh20t/rlds_output/r_h20t_rlds_hf/cfg1/
 | `rh20t_rlds/_config.py` | Per-config metadata (robot, dims, GDrive IDs, patch) |
 | `rh20t_rlds/lerobot_rlds_dataset_builder.py` | TFDS builder for the HF source |
 | `rh20t_rlds/rh20t_rlds_dataset_builder.py` | TFDS builder for the raw source |
-| `rh20t_api/` | Vendored RH20T scene loader (raw source) |
+| `rh20t_api/` | Official [rh20t/rh20t_api](https://github.com/rh20t/rh20t_api) scene loader, used by the raw/GDrive source. Git-ignored — clone it into the repo root yourself (see [Setup](#setup)) |
 | `environment.yml` | Pinned conda env spec (`conda env create -f environment.yml`) |
 | `LOCATIONS.md` | Quick reference: where files live, what gets saved |

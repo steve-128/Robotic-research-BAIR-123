@@ -2,8 +2,12 @@
 
 ## Code (the repo)
 The scripts (`download_rh20t.py`, `build_rlds.py`, `verify_rlds.py`,
-`rh20t_rlds/`, `rh20t_api/`) live in the repo directory, e.g. on EC2:
+`rh20t_rlds/`) live in the repo directory, e.g. on EC2:
 `/home/steve92428/Robotic-research-BAIR-123/`.
+
+`rh20t_api/` (the official [rh20t/rh20t_api](https://github.com/rh20t/rh20t_api),
+needed only for the `--gdrive` source) is **git-ignored** — clone it into the
+repo root yourself: `git clone https://github.com/rh20t/rh20t_api.git`.
 
 ## Data root (everything downloaded + built)
 Resolved **relative to the scripts**, three levels up, at `../../../data/rh20t/`.
